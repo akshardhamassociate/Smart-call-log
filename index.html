@@ -509,7 +509,7 @@ const LS={logs:"acl4_logs",contacts:"acl4_contacts",sess:"acl4_sess",url:"acl4_u
 function db(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}
 function arr(k){const v=db(k);return Array.isArray(v)?v:[]}
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
-function syncUrl(){return (SYNC_URL&&SYNC_URL.trim())||localStorage.getItem(LS.url)||""}
+function syncUrl(){return localStorage.getItem(LS.url)||(SYNC_URL&&SYNC_URL.trim())||""}
 function loadUsers(){let u=db(LS.users);if(!Array.isArray(u)||!u.length){u=BASE_USERS.slice();save(LS.users,u);}return u;}
 function allUsers(){return loadUsers();}
 function getCats(){let c=db(LS.cats);if(!Array.isArray(c)||!c.length){c=DEFAULT_CATS.slice();save(LS.cats,c);}return c;}
