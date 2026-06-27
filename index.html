@@ -554,15 +554,23 @@ async function cloudFetchConfig(){
         const assignedId=sc.assignedTo||sc.uid||'';
         let uid=assignedId,uname='';
         if(uid){const u=users.find(u=>u.id===uid);uname=u?u.name:uid;}
-        // Skip if already exists by mobile
-        if(!cs.find(c=>c.mob===mob)){
+        // Existing contact dhundho same mobile se
+        const existing=cs.findIndex(c=>c.mob===mob);
+        if(existing>=0){
+          // Contact mil gaya — uid update karo agar sheet mein assignedTo set hai
+          if(uid&&!cs[existing].uid){
+            cs[existing].uid=uid;
+            cs[existing].user=uname||cs[existing].user;
+          }
+        }else{
+          // Naya contact add karo
           cs.push({
-            id:'CS'+Date.now()+Math.random().toString(36).slice(2,4),
-            uid,user:uname,
+            id:sc.id||('CS'+Date.now()+Math.random().toString(36).slice(2,4)),
+            uid,user:uname||sc.user||'',
             name:sc.name||'Unknown',
             mob,
             cat:sc.cat||sc.category||'Customer',
-            ts:new Date().toISOString(),
+            ts:sc.ts||new Date().toISOString(),
             fromSheet:true
           });
         }
