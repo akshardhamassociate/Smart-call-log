@@ -414,8 +414,8 @@
 <div class="modal" id="contactModal"><div class="sheet"><div class="grab"></div>
   <button class="modal-close-btn" onclick="closeModal('contactModal')" title="Close">✕</button>
   <h3>New Contact</h3><p class="ssub">Save the number once, then call/WhatsApp from here</p>
-  <label class="req">Name</label><input id="c_name" placeholder="Name">
-  <label class="req">Mobile</label><input id="c_mob" type="tel" inputmode="numeric" placeholder="98XXXXXXXX">
+  <label>Name</label><input id="c_name" placeholder="Name (optional)">
+  <label>Mobile</label><input id="c_mob" type="tel" inputmode="numeric" placeholder="98XXXXXXXX (optional)">
   <label>Category</label><div class="seg" id="c_segCat"></div><input class="catother" id="c_catOther" placeholder="Type custom category">
   <div id="c_assignWrap" style="display:none">
     <label>👤 Assign to User</label>
@@ -527,7 +527,7 @@ function logout(){localStorage.removeItem(LS.sess);location.reload();}
 
 /* ================= SYNC ================= */
 function jsonp(url){return new Promise((resolve,reject)=>{
-  const cb='_jcb'+Date.now();let timer=setTimeout(()=>{cleanup();reject(new Error('timeout'));},8000);
+  const cb='_jcb'+Date.now();let timer=setTimeout(()=>{cleanup();reject(new Error('timeout'));},15000);
   const s=document.createElement('script');
   function cleanup(){clearTimeout(timer);try{delete window[cb]}catch(e){window[cb]=undefined}if(s.parentNode)s.remove();}
   window[cb]=d=>{cleanup();resolve(d);};
@@ -540,7 +540,11 @@ async function cloudFetchConfig(){
   const url=syncUrl();if(!url)return false;
   try{
     const data=await jsonp(url);
-    if(data&&Array.isArray(data.users)&&data.users.length)save(LS.users,data.users);
+    if(data&&Array.isArray(data.users)&&data.users.length){
+      save(LS.users,data.users);
+      // me object bhi refresh karo taaki stale role na rahe
+      if(me){const fresh=data.users.find(u=>u.id===me.id);if(fresh)me=fresh;}
+    }
     if(data&&Array.isArray(data.categories)&&data.categories.length)save(LS.cats,data.categories);
     // Google Sheet se contacts pull karo (assignedTo support ke saath)
     if(data&&Array.isArray(data.contacts)&&data.contacts.length){
@@ -555,10 +559,10 @@ async function cloudFetchConfig(){
         let uid=assignedId,uname='';
         if(uid){const u=users.find(u=>u.id===uid);uname=u?u.name:uid;}
         // Existing contact dhundho same mobile se
-        const existing=cs.findIndex(c=>c.mob===mob);
+        const existing=cs.findIndex(c=>String(c.mob)===String(mob));
         if(existing>=0){
-          // Contact mil gaya — uid update karo agar sheet mein assignedTo set hai
-          if(uid&&!cs[existing].uid){
+          // Contact mil gaya — uid update karo agar sheet mein assignedTo set hai (reassign support)
+          if(uid){
             cs[existing].uid=uid;
             cs[existing].user=uname||cs[existing].user;
           }
@@ -576,6 +580,23 @@ async function cloudFetchConfig(){
         }
       });
       save(LS.contacts,cs);
+    }
+    // Logs sync — sheet se baaki team ke logs pull karo (admin dashboard ke liye)
+    if(data&&Array.isArray(data.logs)&&data.logs.length){
+      let ls=arr(LS.logs);
+      const existingIds=new Set(ls.map(l=>l.id));
+      let added=0;
+      data.logs.forEach(sl=>{
+        if(!sl.id)return;
+        if(existingIds.has(sl.id)){
+          // Already hai — update karo (edit case)
+          const idx=ls.findIndex(l=>l.id===sl.id);
+          if(idx>=0&&sl.ts>=(ls[idx].ts||'')){ls[idx]=Object.assign({},ls[idx],sl);added++;}
+        }else{
+          ls.push(sl);added++;
+        }
+      });
+      if(added>0)save(LS.logs,ls);
     }
     return true;
   }catch(e){return false;}
@@ -595,7 +616,7 @@ async function init(){
   if(s&&s.id){const u=allUsers().find(x=>x.id===s.id);if(u){me=u;enterApp();return;}}
   document.getElementById('li_pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 }
-function isAdmin(){return ADMIN_ROLES.includes(me.role);}
+function isAdmin(){return !!(me&&ADMIN_ROLES.includes(me.role));}
 function enterApp(){
   document.getElementById('login').style.display='none';
   document.getElementById('app').style.display='flex';
@@ -623,6 +644,8 @@ function go(tab){
   document.querySelectorAll('[data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));
   window.scrollTo(0,0);
   if(tab==='team'){renderMembers();renderCats();}
+  // Contacts ya Home section khulte hi silent sync karo (sirf jab koi call pending nahi)
+  if((tab==='contacts'||tab==='home')&&!pendingCall){silentSync();}
 }
 
 /* ================= HELPERS ================= */
@@ -751,7 +774,7 @@ function entryHTML(l){
     ${l.action?`<div class="meta"><b>Next:<\/b> ${esc(l.action)}<\/div>`:''}
     ${l.comment?`<div class="meta" style="color:var(--muted)">${esc(l.comment)}<\/div>`:''}
     <div class="foot"><span>📅 ${fmt(l.date)}${l.dur?' · '+l.dur:''}${who}<\/span>${l.next?`<span class="nx ${over?'over':''}">↻ ${fmt(l.next)}${over?' DUE':''}<\/span>`:''}<\/div>
-    <div class="erow">${l.mob?`<button class="mini call" onclick="startCall('${esc(l.name)}','${l.mob}','${esc(l.cat)}')">📞 Call<\/button><button class="mini wa" onclick="waNum('${l.mob}')">💬 WA<\/button>`:''}<button class="mini edit" onclick="editLog('${l.id}')">✎ Edit<\/button>${recBtn}<\/div>
+    <div class="erow">${l.mob?`<button class="mini call" onclick="startCall('${esc(l.name)}','${esc(l.mob)}','${esc(l.cat)}')">📞 Call<\/button><button class="mini wa" onclick="waNum('${esc(l.mob)}')">💬 WA<\/button>`:''}<button class="mini edit" onclick="editLog('${l.id}')">✎ Edit<\/button>${recBtn}<\/div>
     <div class="rec-wrap" id="recplay_${l.id}"><div class="rec-label">🎙 Call Recording<\/div><audio controls style="width:100%;height:34px"><\/audio><\/div><\/div>`;
 }
 
@@ -789,8 +812,28 @@ function renderMembers(){
 function empty(a,b,c){return `<div class="empty"><div class="e1">${a}<\/div><div class="e2">${b}<\/div><div class="e3">${c}<\/div><\/div>`;}
 
 /* ================= CALL FLOW ================= */
-function setupCallReturn(){document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible'&&pendingCall){const away=Math.round((Date.now()-pendingCall.start)/1000);const pc=pendingCall;pendingCall=null;if(away>=4)openCallModal(pc,away);}});}
+let _lastSync=0;
+async function silentSync(){
+  if(!syncUrl())return;
+  const now=Date.now();
+  if(now-_lastSync<90000)return; // 90 sec se kam mein dobara nahi
+  _lastSync=now;
+  const ok=await cloudFetchConfig();
+  if(ok&&me){renderAll();}
+}
+
+function setupCallReturn(){
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible'){
+      // App foreground mein aaya — sync karo
+      if(me)silentSync();
+      // Pending call check
+      if(pendingCall){const away=Math.round((Date.now()-pendingCall.start)/1000);const pc=pendingCall;pendingCall=null;if(away>=4)openCallModal(pc,away);}
+    }
+  });
+  // Har 2 minute mein auto-sync
+  setInterval(()=>{if(me&&document.visibilityState==='visible')silentSync();},120000);
+}
 function startCall(name,mob,cat){pendingCall={name,mob,cat:cat||'Customer',start:Date.now()};window.location.href='tel:'+mob;}
 function waNum(m){let n=String(m).replace(/\D/g,'');if(n.length===10)n='91'+n;window.open('https://wa.me/'+n,'_blank');}
 function durTxt(s){if(s<60)return s+'s';return Math.floor(s/60)+'m '+(s%60)+'s';}
@@ -839,7 +882,19 @@ function saveLog(){
 }
 function commit(o){
   let logs=arr(LS.logs);
-  if(o.id){logs=logs.map(l=>l.id===o.id?Object.assign({},l,o):l);save(LS.logs,logs);pushSheet('log',logs.find(l=>l.id===o.id));return o.id;}
+  if(o.id){
+    // Edit — hasRec preserve karo
+    logs=logs.map(l=>{
+      if(l.id!==o.id)return l;
+      const updated=Object.assign({},l,o);
+      if(l.hasRec&&!o.hasRec)updated.hasRec=true; // recording link toot na jaaye
+      updated.ts=new Date().toISOString(); // update timestamp
+      return updated;
+    });
+    save(LS.logs,logs);
+    pushSheet('log',logs.find(l=>l.id===o.id));
+    return o.id;
+  }
   const rec=Object.assign({id:'L'+Date.now()+Math.random().toString(36).slice(2,5),uid:me.id,user:me.name,ts:new Date().toISOString()},o);
   logs.push(rec);save(LS.logs,logs);pushSheet('log',rec);return rec.id;
 }
@@ -858,15 +913,17 @@ function openContactAdd(){
   openModal('contactModal');
 }
 function saveContact(){
-  const name=document.getElementById('c_name').value.trim(),mob=document.getElementById('c_mob').value.trim();
-  if(!name||!mob){toast('Name and mobile both required');return;}
+  const name=document.getElementById('c_name').value.trim()||'Unknown';
+  const mob=document.getElementById('c_mob').value.trim();
+  // Duplicate mobile check
+  if(mob){
+    const exists=arr(LS.contacts).find(c=>c.mob===mob.replace(/\s+/g,''));
+    if(exists){if(!confirm('Is mobile se contact already hai ('+exists.name+'). Phir bhi add karein?'))return;}
+  }
   let tUid=me.id,tUser=me.name;
   if(isAdmin()){
     const selVal=document.getElementById('c_assignUser').value;
-    if(selVal){
-      const tu=allUsers().find(u=>u.id===selVal);
-      if(tu){tUid=tu.id;tUser=tu.name;}
-    }
+    if(selVal){const tu=allUsers().find(u=>u.id===selVal);if(tu){tUid=tu.id;tUser=tu.name;}}
   }
   addContact(name,mob,getSegCat('c_segCat','c_catOther'),tUid,tUser);
   closeModal('contactModal');toast('Contact saved — '+tUser+' ko assign ✓');renderContacts();
