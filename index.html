@@ -197,6 +197,9 @@
   .sheet{background:#fff;width:100%;max-width:480px;border-radius:22px;padding:24px 22px;max-height:90vh;overflow:auto;animation:pop .25s cubic-bezier(.2,.8,.2,1);box-shadow:var(--sh-lg)}
   .sheet .grab{display:none}
   .sheet h3{margin:0 0 4px;font-size:18px}
+  .modal-close-btn{position:absolute;top:14px;right:14px;background:var(--bg2);border:1.5px solid var(--line);color:var(--slate);width:34px;height:34px;border-radius:50%;font-size:18px;cursor:pointer;display:grid;place-items:center;font-weight:700;line-height:1;z-index:2}
+  .modal-close-btn:hover{background:var(--red-l);border-color:var(--red);color:var(--red)}
+  .sheet{position:relative}
   .sheet .ssub{font-size:13px;color:var(--muted);margin:0 0 14px}
   .callhead{background:var(--grad);border-radius:16px;padding:14px;color:#fff;margin-bottom:16px;display:flex;align-items:center;gap:12px}
   .callhead .av{width:46px;height:46px;border-radius:13px;background:rgba(255,255,255,.22);display:grid;place-items:center;font-weight:800;font-size:18px}
@@ -393,6 +396,7 @@
 
 <!-- auto call-log -->
 <div class="modal" id="callModal"><div class="sheet"><div class="grab"></div>
+  <button class="modal-close-btn" onclick="closeModal('callModal')" title="Close">✕</button>
   <div class="callhead"><div class="av" id="cl_av">?</div><div><div class="cn" id="cl_name">—</div><div class="cd" id="cl_dur">Call done — fill the details</div></div></div>
   <label class="req">Category</label><div class="seg" id="cl_segCat"></div><input class="catother" id="cl_catOther" placeholder="Type custom category">
   <label class="req">Purpose</label><input id="cl_purpose" placeholder="Purpose of the call">
@@ -408,6 +412,7 @@
 
 <!-- contact add -->
 <div class="modal" id="contactModal"><div class="sheet"><div class="grab"></div>
+  <button class="modal-close-btn" onclick="closeModal('contactModal')" title="Close">✕</button>
   <h3>New Contact</h3><p class="ssub">Save the number once, then call/WhatsApp from here</p>
   <label class="req">Name</label><input id="c_name" placeholder="Name">
   <label class="req">Mobile</label><input id="c_mob" type="tel" inputmode="numeric" placeholder="98XXXXXXXX">
@@ -423,6 +428,7 @@
 
 <!-- import contacts -->
 <div class="modal" id="importModal"><div class="sheet"><div class="grab"></div>
+  <button class="modal-close-btn" onclick="closeModal('importModal')" title="Close">✕</button>
   <h3>Import Contacts</h3><p class="ssub">Bring in name + number automatically. Other details you add later.</p>
   <button class="btn primary" id="impPhoneBtn" onclick="importPhone()" style="display:none">📱 Import from phone contacts</button>
   <div id="imp_assignWrap" style="display:none;margin-top:14px">
@@ -438,6 +444,7 @@
 
 <!-- member add/edit -->
 <div class="modal" id="memberModal"><div class="sheet"><div class="grab"></div>
+  <button class="modal-close-btn" onclick="closeModal('memberModal')" title="Close">✕</button>
   <h3 id="m_title">New Team Member</h3><p class="ssub">Only Admin / Tech can manage members</p>
   <label class="req">Full name</label><input id="m_name" placeholder="e.g. Mohit Sharma">
   <label class="req">Login ID</label><input id="m_id" placeholder="mohit" autocapitalize="none" spellcheck="false">
@@ -452,6 +459,7 @@
 
 <!-- settings -->
 <div class="modal" id="settingsModal"><div class="sheet"><div class="grab"></div>
+  <button class="modal-close-btn" onclick="closeModal('settingsModal')" title="Close">✕</button>
   <h3>Settings</h3>
   <div id="urlManual">
     <label>Google Sheet sync URL</label>
@@ -845,12 +853,15 @@ function saveContact(){
   const name=document.getElementById('c_name').value.trim(),mob=document.getElementById('c_mob').value.trim();
   if(!name||!mob){toast('Name and mobile both required');return;}
   let tUid=me.id,tUser=me.name;
-  if(isAdmin()&&document.getElementById('c_assignWrap').style.display!=='none'){
-    tUid=document.getElementById('c_assignUser').value;
-    const tu=allUsers().find(u=>u.id===tUid);tUser=tu?tu.name:me.name;
+  if(isAdmin()){
+    const selVal=document.getElementById('c_assignUser').value;
+    if(selVal){
+      const tu=allUsers().find(u=>u.id===selVal);
+      if(tu){tUid=tu.id;tUser=tu.name;}
+    }
   }
   addContact(name,mob,getSegCat('c_segCat','c_catOther'),tUid,tUser);
-  closeModal('contactModal');toast('Contact saved ✓');renderContacts();
+  closeModal('contactModal');toast('Contact saved — '+tUser+' ko assign ✓');renderContacts();
 }
 function addContact(name,mob,cat,tUid,tUser){
   const uid=tUid||me.id,user=tUser||me.name;
@@ -875,9 +886,9 @@ async function importPhone(){
     const list=await navigator.contacts.select(props,opts);
     let n=0;
     let tUid=me.id,tUser=me.name;
-    if(isAdmin()&&document.getElementById('imp_assignWrap').style.display!=='none'){
-      tUid=document.getElementById('imp_assignUser').value;
-      const tu=allUsers().find(u=>u.id===tUid);tUser=tu?tu.name:me.name;
+    if(isAdmin()){
+      const selVal=document.getElementById('imp_assignUser').value;
+      if(selVal){const tu=allUsers().find(u=>u.id===selVal);if(tu){tUid=tu.id;tUser=tu.name;}}
     }
     list.forEach(c=>{const nm=(c.name&&c.name[0])||'Unknown';const tel=(c.tel&&c.tel[0])||'';if(tel){addContact(nm,tel.replace(/[^\d+]/g,''),'Customer',tUid,tUser);n++;}});
     closeModal('importModal');renderContacts();toast(n+' contact'+(n!==1?'s':'')+' imported ✓');
@@ -892,9 +903,9 @@ function importCSV(input){
     if(lines.length){const first=lines[0].toLowerCase();if(first.includes('name')||first.includes('mobile')||first.includes('phone'))start=1;}
     let n=0;
     let defUid=me.id,defUser=me.name;
-    if(isAdmin()&&document.getElementById('imp_assignWrap').style.display!=='none'){
-      defUid=document.getElementById('imp_assignUser').value;
-      const tu=allUsers().find(u=>u.id===defUid);defUser=tu?tu.name:me.name;
+    if(isAdmin()){
+      const selVal=document.getElementById('imp_assignUser').value;
+      if(selVal){const tu=allUsers().find(u=>u.id===selVal);if(tu){defUid=tu.id;defUser=tu.name;}}
     }
     for(let i=start;i<lines.length;i++){
       const parts=lines[i].split(',').map(s=>s.replace(/^"|"$/g,'').trim());
@@ -991,9 +1002,39 @@ function playRec(lid,btn){
   });
 }
 
+/* ================= MODAL MANAGEMENT ================= */
+let _openModalId=null;
+function openModal(id){
+  document.getElementById(id).classList.add('show');
+  _openModalId=id;
+  // Push a fake history state so back button closes modal instead of exiting app
+  if(window.history&&window.history.pushState){
+    window.history.pushState({modal:id},'');
+  }
+}
+function closeModal(id){
+  document.getElementById(id).classList.remove('show');
+  _openModalId=null;
+}
+// Back button (Android/PWA) — close modal instead of going back
+window.addEventListener('popstate',function(e){
+  if(_openModalId){closeModal(_openModalId);}
+});
+// Tap outside sheet (on dark overlay) to close modal
+document.addEventListener('click',function(e){
+  if(!_openModalId)return;
+  const modal=document.getElementById(_openModalId);
+  if(!modal)return;
+  const sheet=modal.querySelector('.sheet');
+  if(sheet&&!sheet.contains(e.target)&&modal.contains(e.target)){
+    closeModal(_openModalId);
+    // Remove the history state we pushed
+    if(window.history&&window.history.state&&window.history.state.modal){
+      window.history.go(-1);
+    }
+  }
+});
 /* ================= SETTINGS / SYNC ================= */
-function openModal(id){document.getElementById(id).classList.add('show');}
-function closeModal(id){document.getElementById(id).classList.remove('show');}
 function saveSettings(){localStorage.setItem(LS.url,document.getElementById('set_url').value.trim());refreshSync();toast('Sync URL saved ✓');}
 function refreshSync(){
   const inbuilt=!!(SYNC_URL&&SYNC_URL.trim());
