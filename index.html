@@ -136,9 +136,9 @@
   .contact .av{width:42px;height:42px;border-radius:12px;background:var(--grad-ink);color:#fff;display:grid;place-items:center;font-weight:800;flex:none}
   .contact .nm{font-weight:700;font-size:15px}
   .contact .mb{font-size:12px;color:var(--muted);font-weight:600;margin-top:2px}
-  .contact .acts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+  .contact .acts{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:12px}
   .ca{border:none;border-radius:11px;padding:10px;font-size:12.5px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;transition:.12s}
-  .ca.call{background:var(--green);color:#fff} .ca.wa{background:#25b04c;color:#fff} .ca.log{background:#f0f3f4;color:var(--slate)}
+  .ca.call{background:var(--green);color:#fff} .ca.wa{background:#25b04c;color:#fff} .ca.log{background:#f0f3f4;color:var(--slate)} .ca.done{background:var(--blue);color:#fff}
   .ca:active{transform:scale(.96)}
 
   .form{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;box-shadow:var(--sh);max-width:640px;margin:0 auto}
@@ -398,6 +398,13 @@
 <div class="modal" id="callModal"><div class="sheet"><div class="grab"></div>
   <button class="modal-close-btn" onclick="closeModal('callModal')" title="Close">✕</button>
   <div class="callhead"><div class="av" id="cl_av">?</div><div><div class="cn" id="cl_name">—</div><div class="cd" id="cl_dur">Call done — fill the details</div></div></div>
+  <label class="req">Call Status</label>
+  <div class="seg" id="cl_status">
+    <button data-v="connected">✅ Connected</button>
+    <button data-v="notpicked">❌ Not Picked</button>
+    <button class="other" data-v="other">Other ＋</button>
+  </div>
+  <input class="catother" id="cl_statusOther" placeholder="Type status (e.g. wrong number, call back later)">
   <label class="req">Category</label><div class="seg" id="cl_segCat"></div><input class="catother" id="cl_catOther" placeholder="Type custom category">
   <label class="req">Purpose</label><input id="cl_purpose" placeholder="Purpose of the call">
   <label>What was discussed (response)</label><textarea id="cl_resp" placeholder="What did they say..."></textarea>
@@ -611,6 +618,7 @@ async function syncNow(){
 }
 
 async function init(){
+  buildCallStatusSeg();
   await cloudFetchConfig();
   const s=db(LS.sess);
   if(s&&s.id){const u=allUsers().find(x=>x.id===s.id);if(u){me=u;enterApp();return;}}
@@ -796,7 +804,7 @@ function renderContacts(){
     const aTag=aUser?`<span class="assign-tag">👤 ${esc(aUser.name)}<\/span>`:'';
     return `<div class="contact">
     <div class="c1"><div class="av">${initials(c.name)}<\/div><div style="flex:1;min-width:0"><div class="nm">${esc(c.name)}<\/div><div class="mb">📱 ${esc(c.mob)}<\/div>${aTag}<\/div>${catBadge(c.cat)}<\/div>
-    <div class="acts"><button class="ca call" onclick="startCall('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📞 Call<\/button><button class="ca wa" onclick="waNum('${c.mob}')">💬 WhatsApp<\/button><button class="ca log" onclick="logFromContact('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📝 Log<\/button><\/div>
+    <div class="acts"><button class="ca call" onclick="startCall('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📞 Call<\/button><button class="ca wa" onclick="waNum('${c.mob}')">💬 WhatsApp<\/button><button class="ca log" onclick="logFromContact('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📝 Log<\/button><button class="ca done" onclick="markConnected('${esc(c.name)}','${c.mob}')">✅ Connected<\/button><\/div>
   <\/div>`;
   }).join(''):empty('👥','No contacts yet','Tap ＋ New Contact or Import');
 }
@@ -838,9 +846,42 @@ function startCall(name,mob,cat){pendingCall={name,mob,cat:cat||'Customer',start
 function waNum(m){let n=String(m).replace(/\D/g,'');if(n.length===10)n='91'+n;window.open('https://wa.me/'+n,'_blank');}
 function durTxt(s){if(s<60)return s+'s';return Math.floor(s/60)+'m '+(s%60)+'s';}
 
+/* ----- call status segment (Connected / Not Picked / Other) ----- */
+function buildCallStatusSeg(){
+  const el=document.getElementById('cl_status');
+  el.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    el.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    const oth=document.getElementById('cl_statusOther');
+    if(b.dataset.v==='other'){oth.style.display='block';oth.focus();}else{oth.style.display='none';oth.value='';}
+  });
+}
+function resetCallStatus(){
+  document.getElementById('cl_status').querySelectorAll('button').forEach(b=>b.classList.remove('on'));
+  const oth=document.getElementById('cl_statusOther');oth.style.display='none';oth.value='';
+}
+function getCallStatus(){
+  const el=document.getElementById('cl_status');const on=el.querySelector('button.on');
+  if(!on)return null;
+  if(on.dataset.v==='other'){const v=document.getElementById('cl_statusOther').value.trim();return v?{key:'other',label:v}:null;}
+  return {key:on.dataset.v,label:on.textContent.trim()};
+}
+/* ----- remove a contact once the call is actually connected ----- */
+function removeContactByMobile(mob){
+  if(!mob)return;
+  const clean=String(mob).replace(/\s+/g,'');if(!clean)return;
+  let cs=arr(LS.contacts);const before=cs.length;
+  cs=cs.filter(c=>String(c.mob).replace(/\s+/g,'')!==clean);
+  if(cs.length!==before){save(LS.contacts,cs);pushSheet('contact',{action:'delete',mob:clean,by:me.name});renderContacts();}
+}
+function markConnected(name,mob){
+  if(!confirm(name+' se baat ho gayi? Yeh contact list se hat jayega.'))return;
+  removeContactByMobile(mob);toast('Contact hata diya — baat ho chuki ✓');
+}
+
 function openCallModal(pc,away){
   document.getElementById('cl_av').textContent=initials(pc.name);document.getElementById('cl_name').textContent=pc.name;
   document.getElementById('cl_dur').textContent='Call done · ~'+durTxt(away)+' · fill details';
+  resetCallStatus();
   setSegCat('cl_segCat','cl_catOther',pc.cat);
   ['cl_purpose','cl_resp','cl_action','cl_next'].forEach(i=>document.getElementById(i).value='');
   document.getElementById('cl_recording').value='';
@@ -848,11 +889,14 @@ function openCallModal(pc,away){
 }
 function saveCallModal(){
   const ctx=document.getElementById('callModal')._ctx||{};const purpose=document.getElementById('cl_purpose').value.trim();
+  const status=getCallStatus();
+  if(!status){toast('Call status select karo');return;}
   if(!purpose){toast('Purpose is required');return;}
   const next=document.getElementById('cl_next').value||plusDays(today(),7);
   const recFile=document.getElementById('cl_recording').files&&document.getElementById('cl_recording').files[0];
-  const lid=commit({date:today(),cat:getSegCat('cl_segCat','cl_catOther'),name:ctx.name,mob:ctx.mob||'',purpose,resp:document.getElementById('cl_resp').value.trim(),action:document.getElementById('cl_action').value.trim(),next,comment:'',dur:ctx.dur||'',hasRec:!!recFile});
+  const lid=commit({date:today(),cat:getSegCat('cl_segCat','cl_catOther'),name:ctx.name,mob:ctx.mob||'',purpose,resp:document.getElementById('cl_resp').value.trim(),action:document.getElementById('cl_action').value.trim(),next,comment:'',dur:ctx.dur||'',hasRec:!!recFile,callStatus:status.key,callStatusLabel:status.label});
   if(recFile&&lid)saveRec(lid,recFile);
+  if(status.key==='connected')removeContactByMobile(ctx.mob);
   closeModal('callModal');document.getElementById('cl_recording').value='';toast('Call log saved ✓');renderAll();
 }
 
