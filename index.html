@@ -619,9 +619,20 @@ async function syncNow(){
 
 async function init(){
   buildCallStatusSeg();
-  await cloudFetchConfig();
+  // Pehle local session check karo — agar already logged in ho, seedha app kholo
+  // (network sync ka wait mat karo, warna login screen 1-2 sec flash karega)
   const s=db(LS.sess);
-  if(s&&s.id){const u=allUsers().find(x=>x.id===s.id);if(u){me=u;enterApp();return;}}
+  if(s&&s.id){
+    const u=allUsers().find(x=>x.id===s.id);
+    if(u){
+      me=u;enterApp();
+      // Sheet se fresh data background mein sync karo, bina UI ko block/flash kiye
+      cloudFetchConfig().then(ok=>{if(ok&&me){renderAll();}});
+      return;
+    }
+  }
+  // Fresh login — users list Sheet se pull karni zaroori hai isliye yahan wait karo
+  await cloudFetchConfig();
   document.getElementById('li_pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 }
 function isAdmin(){return !!(me&&ADMIN_ROLES.includes(me.role));}
@@ -786,6 +797,14 @@ function entryHTML(l){
     <div class="rec-wrap" id="recplay_${l.id}"><div class="rec-label">🎙 Call Recording<\/div><audio controls style="width:100%;height:34px"><\/audio><\/div><\/div>`;
 }
 
+function contactCardHTML(c){
+  const aUser=isAdmin()&&c.uid&&c.uid!==me.id?allUsers().find(u=>u.id===c.uid):null;
+  const aTag=aUser?`<span class="assign-tag">👤 ${esc(aUser.name)}<\/span>`:'';
+  return `<div class="contact">
+    <div class="c1"><div class="av">${initials(c.name)}<\/div><div style="flex:1;min-width:0"><div class="nm">${esc(c.name)}<\/div><div class="mb">📱 ${esc(c.mob)}<\/div>${aTag}<\/div>${catBadge(c.cat)}<\/div>
+    <div class="acts"><button class="ca call" onclick="startCall('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📞 Call<\/button><button class="ca wa" onclick="waNum('${c.mob}')">💬 WhatsApp<\/button><button class="ca log" onclick="logFromContact('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📝 Log<\/button><button class="ca done" onclick="markConnected('${esc(c.name)}','${c.mob}')">✅ Connected<\/button><\/div>
+  <\/div>`;
+}
 function renderContacts(){
   let cs=arr(LS.contacts).filter(c=>isAdmin()||c.uid===me.id);
   const f=document.getElementById('contactFilters');
@@ -799,14 +818,19 @@ function renderContacts(){
   }
   const af=f.dataset.active||'All';
   const list=af==='All'?cs:(af==='Other'?cs.filter(c=>!KNOWN.includes(c.cat)||c.cat==='Other'):cs.filter(c=>c.cat===af));
-  document.getElementById('contactList').innerHTML=list.length?list.slice().reverse().map(c=>{
-    const aUser=isAdmin()&&c.uid&&c.uid!==me.id?allUsers().find(u=>u.id===c.uid):null;
-    const aTag=aUser?`<span class="assign-tag">👤 ${esc(aUser.name)}<\/span>`:'';
-    return `<div class="contact">
-    <div class="c1"><div class="av">${initials(c.name)}<\/div><div style="flex:1;min-width:0"><div class="nm">${esc(c.name)}<\/div><div class="mb">📱 ${esc(c.mob)}<\/div>${aTag}<\/div>${catBadge(c.cat)}<\/div>
-    <div class="acts"><button class="ca call" onclick="startCall('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📞 Call<\/button><button class="ca wa" onclick="waNum('${c.mob}')">💬 WhatsApp<\/button><button class="ca log" onclick="logFromContact('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📝 Log<\/button><button class="ca done" onclick="markConnected('${esc(c.name)}','${c.mob}')">✅ Connected<\/button><\/div>
-  <\/div>`;
-  }).join(''):empty('👥','No contacts yet','Tap ＋ New Contact or Import');
+  const t=today();
+  // Har contact ka "date added" nikalo (ts se) — jo aaj se pehle ka hai, wo pending mein jayega
+  const dateOf=c=>(c.ts||'').slice(0,10)||t;
+  const pending=list.filter(c=>dateOf(c)<t).sort((a,b)=>(a.ts||'').localeCompare(b.ts||''));
+  const todays=list.filter(c=>dateOf(c)>=t);
+  let html='';
+  if(pending.length){
+    html+=`<h2 class="secttl">⏳ Pending — Not Called Yet (${pending.length})<\/h2><div class="cards">${pending.map(contactCardHTML).join('')}<\/div>`;
+  }
+  html+=`<h2 class="secttl">📅 Today's Contacts<\/h2>`;
+  html+=todays.length?`<div class="cards">${todays.slice().reverse().map(contactCardHTML).join('')}<\/div>`:empty('👥','No new contacts today','Tap ＋ New Contact or Import');
+  if(!pending.length&&!todays.length)html=empty('👥','No contacts yet','Tap ＋ New Contact or Import');
+  document.getElementById('contactList').innerHTML=html;
 }
 
 function renderMembers(){
@@ -824,7 +848,7 @@ let _lastSync=0;
 async function silentSync(){
   if(!syncUrl())return;
   const now=Date.now();
-  if(now-_lastSync<90000)return; // 90 sec se kam mein dobara nahi
+  if(now-_lastSync<25000)return; // 25 sec se kam mein dobara nahi (spam-protect)
   _lastSync=now;
   const ok=await cloudFetchConfig();
   if(ok&&me){renderAll();}
@@ -839,8 +863,8 @@ function setupCallReturn(){
       if(pendingCall){const away=Math.round((Date.now()-pendingCall.start)/1000);const pc=pendingCall;pendingCall=null;if(away>=4)openCallModal(pc,away);}
     }
   });
-  // Har 2 minute mein auto-sync
-  setInterval(()=>{if(me&&document.visibilityState==='visible')silentSync();},120000);
+  // Har 30 second mein auto-sync (jab tak app khula/foreground hai)
+  setInterval(()=>{if(me&&document.visibilityState==='visible')silentSync();},30000);
 }
 function startCall(name,mob,cat){pendingCall={name,mob,cat:cat||'Customer',start:Date.now()};window.location.href='tel:'+mob;}
 function waNum(m){let n=String(m).replace(/\D/g,'');if(n.length===10)n='91'+n;window.open('https://wa.me/'+n,'_blank');}
@@ -871,7 +895,11 @@ function removeContactByMobile(mob){
   const clean=String(mob).replace(/\s+/g,'');if(!clean)return;
   let cs=arr(LS.contacts);const before=cs.length;
   cs=cs.filter(c=>String(c.mob).replace(/\s+/g,'')!==clean);
-  if(cs.length!==before){save(LS.contacts,cs);pushSheet('contact',{action:'delete',mob:clean,by:me.name});renderContacts();}
+  if(cs.length!==before){save(LS.contacts,cs);renderContacts();}
+  // NOTE: intentionally NOT pushed to Google Sheet — the Apps Script backend
+  // has no "delete" handler for type 'contact' and was appending a broken
+  // blank row instead. Sheet ka Contacts tab isliye purana hi rahega jab tak
+  // Apps Script mein proper delete-by-mobile handling add na ki jaye.
 }
 function markConnected(name,mob){
   if(!confirm(name+' se baat ho gayi? Yeh contact list se hat jayega.'))return;
@@ -959,23 +987,38 @@ function openContactAdd(){
 function saveContact(){
   const name=document.getElementById('c_name').value.trim()||'Unknown';
   const mob=document.getElementById('c_mob').value.trim();
-  // Duplicate mobile check
-  if(mob){
-    const exists=arr(LS.contacts).find(c=>c.mob===mob.replace(/\s+/g,''));
-    if(exists){if(!confirm('Is mobile se contact already hai ('+exists.name+'). Phir bhi add karein?'))return;}
-  }
   let tUid=me.id,tUser=me.name;
   if(isAdmin()){
     const selVal=document.getElementById('c_assignUser').value;
     if(selVal){const tu=allUsers().find(u=>u.id===selVal);if(tu){tUid=tu.id;tUser=tu.name;}}
   }
-  addContact(name,mob,getSegCat('c_segCat','c_catOther'),tUid,tUser);
+  const result=addContact(name,mob,getSegCat('c_segCat','c_catOther'),tUid,tUser);
+  if(result&&result.blocked){
+    toast('⚠ Yeh number pehle se "'+result.existing.user+'" ko assign hai — dobara assign nahi ho sakta');
+    return;
+  }
   closeModal('contactModal');toast('Contact saved — '+tUser+' ko assign ✓');renderContacts();
 }
 function addContact(name,mob,cat,tUid,tUser){
   const uid=tUid||me.id,user=tUser||me.name;
-  const rec={id:'C'+Date.now()+Math.random().toString(36).slice(2,4),uid,user,name,mob:String(mob).replace(/\s+/g,''),cat:cat||'Customer',ts:new Date().toISOString()};
-  const cs=arr(LS.contacts);cs.push(rec);save(LS.contacts,cs);pushSheet('contact',rec);return rec;
+  const cleanMob=String(mob||'').replace(/\s+/g,'');
+  const cs=arr(LS.contacts);
+  if(cleanMob){
+    const idx=cs.findIndex(c=>String(c.mob)===cleanMob);
+    if(idx>=0){
+      const existing=cs[idx];
+      if(existing.uid!==uid){
+        // Already assigned to a DIFFERENT user — block, don't create a duplicate/steal it
+        return {blocked:true,existing};
+      }
+      // Same user re-adding the same number — just refresh it, no duplicate row
+      cs[idx].name=name||cs[idx].name;cs[idx].cat=cat||cs[idx].cat;cs[idx].ts=new Date().toISOString();
+      save(LS.contacts,cs);
+      return cs[idx];
+    }
+  }
+  const rec={id:'C'+Date.now()+Math.random().toString(36).slice(2,4),uid,user,name,mob:cleanMob,cat:cat||'Customer',ts:new Date().toISOString()};
+  cs.push(rec);save(LS.contacts,cs);pushSheet('contact',rec);return rec;
 }
 
 /* ---- import ---- */
@@ -993,14 +1036,15 @@ async function importPhone(){
   try{
     const props=['name','tel'];const opts={multiple:true};
     const list=await navigator.contacts.select(props,opts);
-    let n=0;
+    let n=0,skipped=0;
     let tUid=me.id,tUser=me.name;
     if(isAdmin()){
       const selVal=document.getElementById('imp_assignUser').value;
       if(selVal){const tu=allUsers().find(u=>u.id===selVal);if(tu){tUid=tu.id;tUser=tu.name;}}
     }
-    list.forEach(c=>{const nm=(c.name&&c.name[0])||'Unknown';const tel=(c.tel&&c.tel[0])||'';if(tel){addContact(nm,tel.replace(/[^\d+]/g,''),'Customer',tUid,tUser);n++;}});
-    closeModal('importModal');renderContacts();toast(n+' contact'+(n!==1?'s':'')+' imported ✓');
+    list.forEach(c=>{const nm=(c.name&&c.name[0])||'Unknown';const tel=(c.tel&&c.tel[0])||'';if(tel){const r=addContact(nm,tel.replace(/[^\d+]/g,''),'Customer',tUid,tUser);if(r&&r.blocked)skipped++;else n++;}});
+    closeModal('importModal');renderContacts();
+    toast(n+' contact'+(n!==1?'s':'')+' imported ✓'+(skipped?' · '+skipped+' skipped (already assigned)':''));
   }catch(e){toast('Import cancelled');}
 }
 function importCSV(input){
@@ -1010,7 +1054,7 @@ function importCSV(input){
     const text=r.result.replace(/\r/g,'');const lines=text.split('\n').filter(x=>x.trim());
     let start=0;
     if(lines.length){const first=lines[0].toLowerCase();if(first.includes('name')||first.includes('mobile')||first.includes('phone'))start=1;}
-    let n=0;
+    let n=0,skipped=0;
     let defUid=me.id,defUser=me.name;
     if(isAdmin()){
       const selVal=document.getElementById('imp_assignUser').value;
@@ -1023,9 +1067,12 @@ function importCSV(input){
       // Column 4 = assignedTo user ID (Google Sheet se ya CSV mein)
       let tUid=defUid,tUser=defUser;
       if(parts[3]){const u=allUsers().find(u=>u.id===parts[3].trim());if(u){tUid=u.id;tUser=u.name;}}
-      if(!mob)continue;addContact(name,mob,cat,tUid,tUser);n++;
+      if(!mob)continue;
+      const r2=addContact(name,mob,cat,tUid,tUser);
+      if(r2&&r2.blocked)skipped++;else n++;
     }
-    input.value='';closeModal('importModal');renderContacts();toast(n+' contact'+(n!==1?'s':'')+' imported ✓');
+    input.value='';closeModal('importModal');renderContacts();
+    toast(n+' contact'+(n!==1?'s':'')+' imported ✓'+(skipped?' · '+skipped+' skipped (already assigned)':''));
   };
   r.readAsText(file);
 }
