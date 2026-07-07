@@ -512,7 +512,7 @@ const ADMIN_ROLES=["Admin","Tech"];
 ========================================================= */
 const SYNC_URL = "https://script.google.com/macros/s/AKfycbzg03zxLfHawG5NG4fK4bkOd7kZAdKz9lJS2t-UkAhVFc-9xsEADcLWQGpOo-dZtPiV/exec";
 
-const LS={logs:"acl4_logs",contacts:"acl4_contacts",sess:"acl4_sess",url:"acl4_url",users:"acl4_users",cats:"acl4_cats"};
+const LS={logs:"acl4_logs",contacts:"acl4_contacts",sess:"acl4_sess",url:"acl4_url",users:"acl4_users",cats:"acl4_cats",delContacts:"acl4_delContacts"};
 function db(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}
 function arr(k){const v=db(k);return Array.isArray(v)?v:[]}
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
@@ -561,6 +561,7 @@ async function cloudFetchConfig(){
         if(!sc.mob&&!sc.mobile)return;
         const mob=String(sc.mob||sc.mobile||'').replace(/\s+/g,'');
         if(!mob)return;
+        if(isTombstoned(mob,sc.ts||''))return; // Yeh contact hum yahan se delete kar chuke hain (aur koi naya entry nahi aayi) — Sheet se wapas mat lao
         // Assign to user
         const assignedId=sc.assignedTo||sc.uid||'';
         let uid=assignedId,uname='';
@@ -669,6 +670,16 @@ function go(tab){
 
 /* ================= HELPERS ================= */
 function today(){return new Date().toISOString().slice(0,10);}
+/* ----- deleted-contact tombstone (Sheet abhi bhi row rakhta hai, isliye local block-list) ----- */
+function getDelMap(){const m=db(LS.delContacts);return (m&&typeof m==='object'&&!Array.isArray(m))?m:{};}
+function tombstoneMob(mob){if(!mob)return;const m=getDelMap();m[mob]=new Date().toISOString();save(LS.delContacts,m);}
+function untombstoneMob(mob){if(!mob)return;const m=getDelMap();if(mob in m){delete m[mob];save(LS.delContacts,m);}}
+function isTombstoned(mob,incomingTs){
+  const m=getDelMap();if(!(mob in m))return false;
+  const delAt=m[mob];
+  if(incomingTs&&incomingTs>delAt){untombstoneMob(mob);return false;} // yeh naya entry hai (delete ke baad bani) — valid hai, block mat karo
+  return true;
+}
 function plusDays(d,n){const x=new Date(d+'T00:00:00');x.setDate(x.getDate()+n);return x.toISOString().slice(0,10);}
 function fmt(d){if(!d)return'';const p=d.split('-');return p[2]+'/'+p[1];}
 function initials(n){return (n||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();}
@@ -895,11 +906,12 @@ function removeContactByMobile(mob){
   const clean=String(mob).replace(/\s+/g,'');if(!clean)return;
   let cs=arr(LS.contacts);const before=cs.length;
   cs=cs.filter(c=>String(c.mob).replace(/\s+/g,'')!==clean);
-  if(cs.length!==before){save(LS.contacts,cs);renderContacts();}
-  // NOTE: intentionally NOT pushed to Google Sheet — the Apps Script backend
-  // has no "delete" handler for type 'contact' and was appending a broken
-  // blank row instead. Sheet ka Contacts tab isliye purana hi rahega jab tak
-  // Apps Script mein proper delete-by-mobile handling add na ki jaye.
+  if(cs.length!==before){
+    save(LS.contacts,cs);
+    tombstoneMob(clean); // safety net agar sync race ho jaye
+    pushSheet('contact',{action:'delete',mob:clean,by:me.name}); // Apps Script ab delete-support karta hai
+    renderContacts();
+  }
 }
 function markConnected(name,mob){
   if(!confirm(name+' se baat ho gayi? Yeh contact list se hat jayega.'))return;
@@ -1018,7 +1030,7 @@ function addContact(name,mob,cat,tUid,tUser){
     }
   }
   const rec={id:'C'+Date.now()+Math.random().toString(36).slice(2,4),uid,user,name,mob:cleanMob,cat:cat||'Customer',ts:new Date().toISOString()};
-  cs.push(rec);save(LS.contacts,cs);pushSheet('contact',rec);return rec;
+  cs.push(rec);save(LS.contacts,cs);if(cleanMob)untombstoneMob(cleanMob);pushSheet('contact',rec);return rec;
 }
 
 /* ---- import ---- */
