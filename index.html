@@ -347,6 +347,7 @@
         </div>
         <div class="filters" id="contactFilters" style="margin-top:16px"></div>
         <div class="user-filters" id="contactUserFilter" style="display:none"></div>
+        <div class="seg" id="contactViewToggle" style="margin:14px 0 6px"></div>
         <div class="cards" id="contactList"></div>
       </section>
 
@@ -816,7 +817,36 @@ function contactCardHTML(c){
     <div class="acts"><button class="ca call" onclick="startCall('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📞 Call<\/button><button class="ca wa" onclick="waNum('${c.mob}')">💬 WhatsApp<\/button><button class="ca log" onclick="logFromContact('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📝 Log<\/button><button class="ca done" onclick="markConnected('${esc(c.name)}','${c.mob}')">✅ Connected<\/button><\/div>
   <\/div>`;
 }
+/* Jo contact ka Call Logs mein already "connected" wala log ban chuka hai (ya purani entry jisme
+   callStatus field hai hi nahi), use Contacts list se khud-ba-khud hata do — dobara "Connected"
+   button dabane ki zaroorat nahi. Sirf "Not Picked" wale contacts pending mein rehte hain. */
+function reconcileContactsAgainstLogs(){
+  const logs=arr(LS.logs);
+  const connectedMobiles=new Set();
+  logs.forEach(l=>{
+    const mob=String(l.mob||'').replace(/\s+/g,'');
+    if(!mob)return;
+    if(!l.callStatus||l.callStatus==='connected')connectedMobiles.add(mob);
+  });
+  if(!connectedMobiles.size)return false;
+  let cs=arr(LS.contacts);
+  const removed=[];
+  cs=cs.filter(c=>{
+    const mob=String(c.mob).replace(/\s+/g,'');
+    if(mob&&connectedMobiles.has(mob)){removed.push(mob);return false;}
+    return true;
+  });
+  if(removed.length){
+    save(LS.contacts,cs);
+    removed.forEach(mob=>{tombstoneMob(mob);pushSheet('contact',{action:'delete',mob,by:me.name});});
+    return true;
+  }
+  return false;
+}
+let _contactView='pending';
+function setContactView(v){_contactView=v;renderContacts();}
 function renderContacts(){
+  reconcileContactsAgainstLogs(); // pehle purani-called contacts saaf kar do
   let cs=arr(LS.contacts).filter(c=>isAdmin()||c.uid===me.id);
   const f=document.getElementById('contactFilters');
   f.innerHTML=['All',...getCats(),'Other'].map(c=>`<button class="filt ${f.dataset.active===c||(!f.dataset.active&&c==='All')?'on':''}" onclick="setF('contactFilters',this);renderContacts()">${esc(c)}<\/button>`).join('');
@@ -834,14 +864,11 @@ function renderContacts(){
   const dateOf=c=>(c.ts||'').slice(0,10)||t;
   const pending=list.filter(c=>dateOf(c)<t).sort((a,b)=>(a.ts||'').localeCompare(b.ts||''));
   const todays=list.filter(c=>dateOf(c)>=t);
-  let html='';
-  if(pending.length){
-    html+=`<h2 class="secttl">⏳ Pending — Not Called Yet (${pending.length})<\/h2><div class="cards">${pending.map(contactCardHTML).join('')}<\/div>`;
-  }
-  html+=`<h2 class="secttl">📅 Today's Contacts<\/h2>`;
-  html+=todays.length?`<div class="cards">${todays.slice().reverse().map(contactCardHTML).join('')}<\/div>`:empty('👥','No new contacts today','Tap ＋ New Contact or Import');
-  if(!pending.length&&!todays.length)html=empty('👥','No contacts yet','Tap ＋ New Contact or Import');
-  document.getElementById('contactList').innerHTML=html;
+  // Toggle buttons (Pending / Today) — sirf ek group ek time pe dikhega, lambi scroll nahi
+  const vt=document.getElementById('contactViewToggle');
+  vt.innerHTML=`<button class="${_contactView==='pending'?'on':''}" onclick="setContactView('pending')">⏳ Pending (${pending.length})<\/button><button class="${_contactView==='today'?'on':''}" onclick="setContactView('today')">📅 Today (${todays.length})<\/button>`;
+  const showGroup=_contactView==='pending'?pending:todays.slice().reverse();
+  document.getElementById('contactList').innerHTML=showGroup.length?showGroup.map(contactCardHTML).join(''):empty('👥',_contactView==='pending'?'No pending contacts 🎉':'No new contacts today','Tap ＋ New Contact or Import');
 }
 
 function renderMembers(){
