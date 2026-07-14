@@ -488,14 +488,19 @@
 
 <script>
 /* ================= DATA ================= */
+/* NOTE: yeh sirf ek "seed" list hai — jab koi Sheet-connected mode use kar raha ho (jaise abhi),
+   asli login Apps Script ke server-side (doLoginCheck) se verify hota hai, is list se nahi.
+   Password yahan jaan-boojh kar KHAALI rakhe hain taaki source code mein kisi ka bhi real
+   password kabhi na dikhe. Yeh list sirf tab kaam aati hai jab koi bilkul "Local only" (bina
+   Sheet ke) mode use kare — us case mein Team page se in members ka password set karna hoga. */
 const BASE_USERS=[
-  {name:"Krishan Sharma",id:"krishan",pw:"Krishan123",role:"Admin",tc:false},
-  {name:"Rupesh Ji",id:"rupesh",pw:"Rupesh1234",role:"Sales Manager",tc:false},
-  {name:"Sunil Pankaj",id:"sunil",pw:"Sunil1234",role:"Sales Associate",tc:false},
-  {name:"Luv",id:"luv",pw:"Luv1234",role:"Tech",tc:false},
-  {name:"Leeladhar ji",id:"leeladhar",pw:"Leeladhar1234",role:"Accountant",tc:false},
-  {name:"Raghavendra Ji",id:"ragahavdendra",pw:"Raghu1234",role:"Sales Manager",tc:false},
-  {name:"Sunil Meghawal",id:"sunilmeghawal",pw:"Sunil@1234",role:"Sales Associate",tc:false}
+  {name:"Krishan Sharma",id:"krishan",pw:"",role:"Admin",tc:false},
+  {name:"Rupesh Ji",id:"rupesh",pw:"",role:"Sales Manager",tc:false},
+  {name:"Sunil Pankaj",id:"sunil",pw:"",role:"Sales Associate",tc:false},
+  {name:"Luv",id:"luv",pw:"",role:"Tech",tc:false},
+  {name:"Leeladhar ji",id:"leeladhar",pw:"",role:"Accountant",tc:false},
+  {name:"Raghavendra Ji",id:"ragahavdendra",pw:"",role:"Sales Manager",tc:false},
+  {name:"Sunil Meghawal",id:"sunilmeghawal",pw:"",role:"Sales Associate",tc:false}
 ];
 const DEFAULT_CATS=["Customer","Agent","Networker","Vendor"];
 const KNOWN=["Customer","Agent","Networker","Vendor","Other"];
@@ -525,11 +530,35 @@ let me=null,editId=null,pendingCall=null,editMemberId=null;
 
 /* ================= LOGIN ================= */
 function togglePw(){const i=document.getElementById('li_pw');i.type=i.type==='password'?'text':'password';document.getElementById('eyeBtn').textContent=i.type==='password'?'👁':'🙈';}
-function doLogin(){
+async function doLogin(){
   const id=document.getElementById('li_id').value.trim().toLowerCase();const pw=document.getElementById('li_pw').value;
-  const u=allUsers().find(x=>x.id.toLowerCase()===id&&x.pw===pw);
-  if(!u){document.getElementById('loginErr').textContent='Incorrect Login ID or Password';return;}
-  save(LS.sess,{id:u.id});me=u;enterApp();
+  const errEl=document.getElementById('loginErr');
+  if(!id||!pw){errEl.textContent='Enter Login ID and Password';return;}
+  const url=syncUrl();
+  if(!url){
+    // Local-only mode (koi Sheet connect nahi hai) — locally seeded users se check karo
+    const u=allUsers().find(x=>x.id.toLowerCase()===id&&x.pw&&x.pw===pw);
+    if(!u){errEl.textContent='Incorrect Login ID or Password';return;}
+    save(LS.sess,{id:u.id});me=u;enterApp();return;
+  }
+  // Sheet-connected mode — password YAHAN client pe kabhi store/compare nahi hota,
+  // Apps Script server-side verify karta hai aur sirf pass/fail + user info (bina pw) deta hai
+  errEl.textContent='Checking…';
+  try{
+    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({type:'login',record:{id,pw}})});
+    const data=await res.json();
+    if(data&&data.ok&&data.user){
+      let users=allUsers();
+      const idx=users.findIndex(u=>u.id===data.user.id);
+      if(idx>=0)users[idx]=Object.assign({},users[idx],data.user);else users.push(data.user);
+      save(LS.users,users);
+      save(LS.sess,{id:data.user.id});me=data.user;enterApp();
+    }else{
+      errEl.textContent='Incorrect Login ID or Password';
+    }
+  }catch(e){
+    errEl.textContent='Internet check karo aur dobara try karo';
+  }
 }
 function logout(){localStorage.removeItem(LS.sess);location.reload();}
 
@@ -814,26 +843,36 @@ function contactCardHTML(c){
   const aTag=aUser?`<span class="assign-tag">👤 ${esc(aUser.name)}<\/span>`:'';
   return `<div class="contact">
     <div class="c1"><div class="av">${initials(c.name)}<\/div><div style="flex:1;min-width:0"><div class="nm">${esc(c.name)}<\/div><div class="mb">📱 ${esc(c.mob)}<\/div>${aTag}<\/div>${catBadge(c.cat)}<\/div>
-    <div class="acts"><button class="ca call" onclick="startCall('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📞 Call<\/button><button class="ca wa" onclick="waNum('${c.mob}')">💬 WhatsApp<\/button><button class="ca log" onclick="logFromContact('${esc(c.name)}','${c.mob}','${esc(c.cat)}')">📝 Log<\/button><button class="ca done" onclick="markConnected('${esc(c.name)}','${c.mob}')">✅ Connected<\/button><\/div>
+    <div class="acts"><button class="ca call" onclick="startCall('${esc(c.name)}','${esc(c.mob)}','${esc(c.cat)}')">📞 Call<\/button><button class="ca wa" onclick="waNum('${esc(c.mob)}')">💬 WhatsApp<\/button><button class="ca log" onclick="logFromContact('${esc(c.name)}','${esc(c.mob)}','${esc(c.cat)}')">📝 Log<\/button><button class="ca done" onclick="markConnected('${esc(c.name)}','${esc(c.mob)}')">✅ Connected<\/button><\/div>
   <\/div>`;
 }
 /* Jo contact ka Call Logs mein already "connected" wala log ban chuka hai (ya purani entry jisme
    callStatus field hai hi nahi), use Contacts list se khud-ba-khud hata do — dobara "Connected"
-   button dabane ki zaroorat nahi. Sirf "Not Picked" wale contacts pending mein rehte hain. */
+   button dabane ki zaroorat nahi. Sirf "Not Picked" wale contacts pending mein rehte hain.
+   IMPORTANT: log ka date contact ke (re)add hone ke baad/usi din ka hona chahiye — warna kisi
+   purane/stale log (jo mahino pehle kisi aur wajah se bana tha) ki wajah se naya bulk-added
+   contact turant hat jaata (yeh galti pehle ho rahi thi, ab fix kar diya). */
 function reconcileContactsAgainstLogs(){
   const logs=arr(LS.logs);
-  const connectedMobiles=new Set();
+  const connectedDateByMob={}; // mob -> latest connected-log date (YYYY-MM-DD)
   logs.forEach(l=>{
     const mob=String(l.mob||'').replace(/\s+/g,'');
     if(!mob)return;
-    if(!l.callStatus||l.callStatus==='connected')connectedMobiles.add(mob);
+    if(!l.callStatus||l.callStatus==='connected'){
+      const d=l.date||(l.ts||'').slice(0,10)||'';
+      if(d&&(!connectedDateByMob[mob]||d>connectedDateByMob[mob]))connectedDateByMob[mob]=d;
+    }
   });
-  if(!connectedMobiles.size)return false;
+  if(!Object.keys(connectedDateByMob).length)return false;
   let cs=arr(LS.contacts);
   const removed=[];
   cs=cs.filter(c=>{
     const mob=String(c.mob).replace(/\s+/g,'');
-    if(mob&&connectedMobiles.has(mob)){removed.push(mob);return false;}
+    const logDate=mob&&connectedDateByMob[mob];
+    if(logDate){
+      const addedDate=(c.ts||'').slice(0,10)||today();
+      if(logDate>=addedDate){removed.push(mob);return false;} // isi contact ke liye hi connected hui thi — hatao
+    }
     return true;
   });
   if(removed.length){
@@ -1122,6 +1161,7 @@ function openMemberAdd(){
   document.getElementById('m_title').textContent='New Team Member';
   document.getElementById('m_save').textContent='Add Member';
   ['m_name','m_id','m_pw'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('m_pw').placeholder='Password';
   document.getElementById('m_id').disabled=false;
   document.getElementById('m_role').value='Sales Associate';document.getElementById('m_tc').value='no';
   openModal('memberModal');
@@ -1130,7 +1170,8 @@ function editMember(id){
   if(!isAdmin())return;const u=allUsers().find(x=>x.id===id);if(!u)return;editMemberId=id;
   document.getElementById('m_title').textContent='Edit Member';
   document.getElementById('m_save').textContent='Save Changes';
-  document.getElementById('m_name').value=u.name;document.getElementById('m_id').value=u.id;document.getElementById('m_pw').value=u.pw;
+  document.getElementById('m_name').value=u.name;document.getElementById('m_id').value=u.id;document.getElementById('m_pw').value='';
+  document.getElementById('m_pw').placeholder='Leave blank to keep current password';
   document.getElementById('m_id').disabled=false;
   document.getElementById('m_role').value=u.role;document.getElementById('m_tc').value=u.tc?'yes':'no';
   openModal('memberModal');
@@ -1138,13 +1179,15 @@ function editMember(id){
 function saveMember(){
   if(!isAdmin()){toast('Admin/Tech only');return;}
   const name=document.getElementById('m_name').value.trim();const id=document.getElementById('m_id').value.trim().toLowerCase();const pw=document.getElementById('m_pw').value;
-  if(!name||!id||!pw){toast('Enter name, ID and password');return;}
+  if(!name||!id){toast('Enter name and ID');return;}
+  if(!editMemberId&&!pw){toast('Set a password for the new member');return;}
   let users=allUsers();
   if(users.some(u=>u.id.toLowerCase()===id && u.id!==editMemberId)){toast('This Login ID already exists');return;}
   const rec={name,id,pw,role:document.getElementById('m_role').value,tc:document.getElementById('m_tc').value==='yes'};
   if(editMemberId){
-    users=users.map(u=>u.id===editMemberId?rec:u);save(LS.users,users);
-    if(me.id===editMemberId){me=rec;save(LS.sess,{id:rec.id});enterApp();}
+    users=users.map(u=>u.id===editMemberId?Object.assign({},u,rec):u);save(LS.users,users);
+    if(me.id===editMemberId){me=Object.assign({},me,rec);save(LS.sess,{id:me.id});enterApp();}
+    // pw khaali ho to Apps Script purana password preserve karega (delete nahi karega)
     pushSheet('member',{action:'edit',name,id,pw,role:rec.role,tc:rec.tc,by:me.name});toast('Member updated ✓');
   }else{
     users.push(rec);save(LS.users,users);pushSheet('member',{action:'add',name,id,pw,role:rec.role,tc:rec.tc,by:me.name});toast(name+' added ✓');
